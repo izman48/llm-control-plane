@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+
+# Benchmark / generated artifacts
+src/inference_demo/bench/out/
+
+# Node / UI (phase 5)
+node_modules/
+ui/dist/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
