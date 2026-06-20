@@ -223,5 +223,14 @@ directory-level CLAUDE.md files. Likely future splits: `@docs/routing-strategies
 
 ## Commands
 
-(To be filled in as built — e.g. `make test`, `make dev`, `docker compose up`, benchmark + demo
-scripts. Keep current; Claude Code reads it every session.)
+Python is managed with `uv`; the venv is pinned to 3.12 via `.python-version`.
+
+- `make setup` — `uv sync --extra dev` (create venv + install runtime & dev deps).
+- `make test` — `uv run pytest` (scheduler property tests + SimWorker + bench guard).
+- `make lint` — `uv run ruff check .` + `ruff format --check .`.
+- `make typecheck` — `uv run mypy` (strict on `src/`).
+- `make bench` — run the static-vs-continuous benchmark; writes the money graph +
+  summary to `src/inference_demo/bench/out/` (`static_vs_continuous.svg` / `.md`).
+- `make dev` / `make up` — placeholders until phases 4 / 7.
+
+(`dev`, `docker compose up`, and demo scripts get filled in as those phases land.)

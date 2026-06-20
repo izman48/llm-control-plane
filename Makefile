@@ -13,12 +13,12 @@ lint:
 typecheck:
 	uv run mypy
 
+bench:
+	uv run python -m inference_demo.bench.static_vs_continuous
+
 # Placeholders wired up in later phases.
 dev:
 	@echo "dev: implemented in phase 4 (gateway/app.py)"
-
-bench:
-	@echo "bench: implemented in phase 1 (bench/static_vs_continuous.py)"
 
 up:
 	@echo "up: implemented in phase 7 (docker compose)"
