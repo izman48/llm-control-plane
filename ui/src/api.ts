@@ -1,11 +1,20 @@
 import type { AutoscalerView, Preset, Snapshot } from "./types";
 
-const JSON_HEADERS = { "content-type": "application/json" };
+// Optional control token (baked at build time) — sent on mutating requests so a
+// gated public demo stays fully clickable. Not a real secret (it ships in the
+// bundle); the actual protection is the server-side hard caps.
+const CONTROL_TOKEN = import.meta.env.VITE_CONTROL_TOKEN;
+
+function postHeaders(): Record<string, string> {
+  const h: Record<string, string> = { "content-type": "application/json" };
+  if (CONTROL_TOKEN) h["x-control-token"] = CONTROL_TOKEN;
+  return h;
+}
 
 async function postJSON<T>(url: string, body: unknown): Promise<T> {
   const res = await fetch(url, {
     method: "POST",
-    headers: JSON_HEADERS,
+    headers: postHeaders(),
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`${url} -> ${res.status}`);

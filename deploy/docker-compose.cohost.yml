@@ -10,6 +10,8 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.cohost
+      args:
+        VITE_CONTROL_TOKEN: ${CONTROL_TOKEN:-}
     container_name: llm-dashboard
     environment:
       PUBLIC_DEMO: "1"
