@@ -1,0 +1,36 @@
+# Full sim stack: control-plane API (internal) + Caddy serving the console.
+# Local:  docker compose up --build   ->   http://localhost:8080
+# Prod:   add deploy/docker-compose.prod.yml (80/443) and set SITE_ADDRESS + CONTROL_TOKEN.
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.api
+    environment:
+      PUBLIC_DEMO: "1" # force sim backend + apply caps
+      PUBLIC_MAX_WORKERS: "16"
+      PUBLIC_MAX_RATE: "200"
+      PUBLIC_MAX_TOKENS: "512"
+      CONTROL_TOKEN: ${CONTROL_TOKEN:-} # set to gate mutating endpoints
+    expose:
+      - "8000" # internal only — never published to the host
+    restart: unless-stopped
+
+  caddy:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.ui
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+    ports:
+      - "${HTTP_PORT:-8080}:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

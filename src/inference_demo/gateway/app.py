@@ -13,9 +13,10 @@ import json
 import os
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -25,6 +26,28 @@ from inference_demo.metrics import PROMETHEUS_CONTENT_TYPE
 from inference_demo.pool import PoolManager, build_pool
 from inference_demo.routing.strategies import STRATEGY_NAMES
 from inference_demo.types import Priority, Request, WorkerId
+
+
+@dataclass(frozen=True)
+class GatewayConfig:
+    """Deployment guardrails. Defaults are permissive (local dev); the public
+    demo sets these via env to stay sim-only, gated, and capped (see CLAUDE.md)."""
+
+    control_token: str | None = None  # if set, POST/control endpoints require it
+    demo: bool = False  # force sim backend, apply caps
+    max_workers_cap: int = 1024
+    max_rate_cap: float = 100_000.0
+    max_tokens_cap: int = 1_000_000
+
+    @classmethod
+    def from_env(cls) -> GatewayConfig:
+        return cls(
+            control_token=os.environ.get("CONTROL_TOKEN") or None,
+            demo=os.environ.get("PUBLIC_DEMO", "").lower() in ("1", "true", "yes"),
+            max_workers_cap=int(os.environ.get("PUBLIC_MAX_WORKERS", "1024")),
+            max_rate_cap=float(os.environ.get("PUBLIC_MAX_RATE", "100000")),
+            max_tokens_cap=int(os.environ.get("PUBLIC_MAX_TOKENS", "1000000")),
+        )
 
 
 class SubmitBody(BaseModel):
@@ -66,7 +89,15 @@ class _State:
         self.loadgen: LoadGenerator | None = None
 
 
-def create_app(pool: PoolManager, *, run_background: bool = False, tick_s: float = 0.05) -> FastAPI:
+def create_app(
+    pool: PoolManager,
+    *,
+    run_background: bool = False,
+    tick_s: float = 0.05,
+    config: GatewayConfig | None = None,
+) -> FastAPI:
+    cfg = config or GatewayConfig()
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         task: asyncio.Task[None] | None = None
@@ -89,12 +120,19 @@ def create_app(pool: PoolManager, *, run_background: bool = False, tick_s: float
         state.req_seq = n + 1
         return f"u{n}"
 
-    @app.post("/api/submit")
+    def require_control(x_control_token: str | None = Header(default=None)) -> None:
+        # Gate mutating endpoints behind a shared secret when one is configured.
+        if cfg.control_token and x_control_token != cfg.control_token:
+            raise HTTPException(status_code=401, detail="invalid or missing control token")
+
+    gated = [Depends(require_control)]
+
+    @app.post("/api/submit", dependencies=gated)
     def submit(body: SubmitBody) -> dict[str, str]:
         req = Request(
             id=next_req_id(),
-            prompt_tokens=body.prompt_tokens,
-            max_tokens=body.max_tokens,
+            prompt_tokens=min(body.prompt_tokens, cfg.max_tokens_cap),
+            max_tokens=min(body.max_tokens, cfg.max_tokens_cap),
             priority=Priority(body.priority),
             arrival_ts=pool.clock,
             prefix_key=body.prefix_key,
@@ -102,7 +140,7 @@ def create_app(pool: PoolManager, *, run_background: bool = False, tick_s: float
         wid = pool.submit(req)
         return {"req_id": req.id, "worker_id": str(wid)}
 
-    @app.post("/api/step")
+    @app.post("/api/step", dependencies=gated)
     def step(body: StepBody) -> dict[str, float]:
         for _ in range(body.n):
             pool.step()
@@ -116,19 +154,22 @@ def create_app(pool: PoolManager, *, run_background: bool = False, tick_s: float
     def strategies() -> dict[str, list[str]]:
         return {"strategies": STRATEGY_NAMES}
 
-    @app.post("/api/strategy")
+    @app.post("/api/strategy", dependencies=gated)
     def set_strategy(body: StrategyBody) -> dict[str, str]:
         if body.name not in STRATEGY_NAMES:
             raise HTTPException(status_code=422, detail=f"unknown strategy: {body.name!r}")
         pool.set_strategy(body.name)
         return {"strategy": body.name}
 
-    @app.post("/api/autoscaler")
+    @app.post("/api/autoscaler", dependencies=gated)
     def set_autoscaler(body: AutoscalerBody) -> dict[str, object]:
         c = pool.autoscaler.config
+        max_workers = body.max_workers if body.max_workers is not None else c.max_workers
+        max_workers = min(max_workers, cfg.max_workers_cap)  # hard cap
+        min_workers = body.min_workers if body.min_workers is not None else c.min_workers
         new_cfg = AutoscalerConfig(
-            min_workers=body.min_workers if body.min_workers is not None else c.min_workers,
-            max_workers=body.max_workers if body.max_workers is not None else c.max_workers,
+            min_workers=min(min_workers, max_workers),
+            max_workers=max_workers,
             target_queue_depth=(
                 body.target_queue_depth
                 if body.target_queue_depth is not None
@@ -140,17 +181,18 @@ def create_app(pool: PoolManager, *, run_background: bool = False, tick_s: float
         pool.set_autoscaler(config=new_cfg, enabled=body.enabled)
         return pool.pool_snapshot()["autoscaler"]  # type: ignore[return-value]
 
-    @app.post("/api/loadgen")
-    def start_loadgen(body: LoadGenBody) -> dict[str, str]:
-        state.loadgen = LoadGenerator(preset=LoadPreset(body.preset), base_rate=body.base_rate)
-        return {"preset": body.preset, "base_rate": str(body.base_rate)}
+    @app.post("/api/loadgen", dependencies=gated)
+    def start_loadgen(body: LoadGenBody) -> dict[str, object]:
+        rate = min(body.base_rate, cfg.max_rate_cap)  # hard cap
+        state.loadgen = LoadGenerator(preset=LoadPreset(body.preset), base_rate=rate)
+        return {"preset": body.preset, "base_rate": rate}
 
-    @app.post("/api/loadgen/stop")
+    @app.post("/api/loadgen/stop", dependencies=gated)
     def stop_loadgen() -> dict[str, bool]:
         state.loadgen = None
         return {"stopped": True}
 
-    @app.post("/api/workers/kill")
+    @app.post("/api/workers/kill", dependencies=gated)
     def kill_worker(body: KillBody) -> dict[str, str | None]:
         wid = WorkerId(body.worker_id) if body.worker_id else None
         killed = pool.kill_worker(wid)
@@ -188,16 +230,18 @@ async def _run_loop(
         await asyncio.sleep(tick_s)
 
 
-def _pool_from_env() -> PoolManager:
-    """Build the pool from env for `make dev`. WORKER_BACKEND=sim|openai (default
-    sim); OPENAI_BASE_URL + MODEL_NAME configure the OpenAI-compatible endpoint."""
-    backend = os.environ.get("WORKER_BACKEND", "sim")
+def _pool_from_env(cfg: GatewayConfig) -> PoolManager:
+    """Build the pool from env for `make dev` / the container. WORKER_BACKEND=
+    sim|openai|realmodel (default sim); demo mode forces sim and caps max workers."""
+    backend = "sim" if cfg.demo else os.environ.get("WORKER_BACKEND", "sim")
     return build_pool(
         backend=backend,
+        max_workers=min(8, cfg.max_workers_cap),
         base_url=os.environ.get("OPENAI_BASE_URL", "http://localhost:11434"),
         model=os.environ.get("MODEL_NAME", "qwen2.5:0.5b"),
     )
 
 
 # Module-level app for `uvicorn inference_demo.gateway.app:app` (background on).
-app = create_app(_pool_from_env(), run_background=True)
+_cfg = GatewayConfig.from_env()
+app = create_app(_pool_from_env(_cfg), run_background=True, config=_cfg)

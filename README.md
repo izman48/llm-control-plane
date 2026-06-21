@@ -146,13 +146,29 @@ Key endpoints: `POST /api/submit`, `/api/loadgen`, `/api/strategy`, `/api/autosc
 - The benchmark's absolute numbers are sim-defined; they demonstrate the structural win, not a
   hardware claim.
 
+## Deploy (Docker)
+
+```bash
+make up   # docker compose up --build  ->  http://localhost:8080
+```
+
+One `docker compose` brings up the control-plane API (internal-only) and Caddy serving the
+console. The backend runs in **demo mode**: sim-only backend, hard caps on workers / load rate /
+token counts, optional `CONTROL_TOKEN` gating mutating endpoints, and `/metrics` is never proxied
+publicly. For a real VPS deploy, overlay `deploy/docker-compose.prod.yml` (binds 80/443, Caddy
+auto-HTTPS) and set `SITE_ADDRESS` + `CONTROL_TOKEN`.
+
+> **SSRF/reachability:** custom OpenAI endpoints are a local/self-hosted feature only; the public
+> demo stays sim-only. A hosted box can't reach a reviewer's localhost model anyway.
+
 ## Roadmap
 
 - **Phase 6** ✅ — `OpenAIWorker` (mock-tested in CI) + `RealModelWorker` with our own continuous
   batched decode on a real model, verified on-device (greedy matches HF `generate()`; batched
   decode matches per-sequence decode; mid-flight KV-cache merge correct). The real
   static-vs-continuous benchmark confirms the sim's story (1.62× throughput, 1.51× lower p99).
-- **Phase 7** — Docker Compose + VPS deploy (sim-only public demo, gated controls, hard caps).
+- **Phase 7** ✅ — Docker Compose stack (`make up`) with the sim-only, gated, capped demo profile
+  + Caddy auto-HTTPS prod overlay. Remaining (human): provision a VPS, point DNS, deploy.
 - **Phase 8** — architecture diagram, recorded demo, hosted URL, full prior-work writeup.
 
 ## Prior work

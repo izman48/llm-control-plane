@@ -1,0 +1,24 @@
+# Public entrypoint. SITE_ADDRESS=:80 locally (HTTP); set it to a domain in prod
+# and Caddy provisions HTTPS automatically.
+#
+# Only the dashboard (static) and its /api/* are exposed. /metrics is deliberately
+# NOT proxied, so Prometheus internals never reach the public internet.
+{$SITE_ADDRESS::80} {
+	encode gzip
+
+	# API + SSE -> backend (internal-only service on the compose network).
+	# `handle` blocks are mutually exclusive, so the SPA try_files below never
+	# rewrites /api/* paths. /metrics is intentionally not routed here.
+	handle /api/* {
+		reverse_proxy backend:8000 {
+			flush_interval -1
+		}
+	}
+
+	# Static SPA (everything else)
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}

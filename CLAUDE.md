@@ -238,7 +238,13 @@ Python is managed with `uv`; the venv is pinned to 3.12 via `.python-version`.
   the load generator. Key endpoints: `POST /api/submit`, `POST /api/loadgen`,
   `POST /api/strategy`, `POST /api/autoscaler`, `POST /api/workers/kill`,
   `GET /api/snapshot`, `GET /api/stream` (SSE), `GET /metrics` (Prometheus).
-- `make up` — placeholder until phase 7 (docker compose).
+- `make up` — `docker compose up --build`: full sim stack (control-plane API,
+  internal-only, + Caddy serving the console) at `http://localhost:8080`. The
+  backend runs in demo mode (sim-only, capped). Prod deploy adds
+  `deploy/docker-compose.prod.yml` (binds 80/443, auto-HTTPS) with `SITE_ADDRESS`
+  + `CONTROL_TOKEN` set. Env caps: `PUBLIC_DEMO`, `PUBLIC_MAX_WORKERS`,
+  `PUBLIC_MAX_RATE`, `PUBLIC_MAX_TOKENS`, `CONTROL_TOKEN`. Caddy never proxies
+  `/metrics` (internals stay private).
 
 Backends (phase 6). `make dev` reads `WORKER_BACKEND` (default `sim`):
 

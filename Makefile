@@ -36,6 +36,6 @@ ui-build:
 ui-test:
 	npm --prefix ui test
 
-# Placeholder wired up in phase 7.
+# Full sim stack (control plane + console) via Docker; serves http://localhost:8080
 up:
-	@echo "up: implemented in phase 7 (docker compose)"
+	docker compose up --build

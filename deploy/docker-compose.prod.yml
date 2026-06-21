@@ -1,0 +1,9 @@
+# Production overlay: bind 80/443 so Caddy can auto-provision HTTPS.
+# Usage (on the VPS):
+#   export SITE_ADDRESS=demo.example.com CONTROL_TOKEN=$(openssl rand -hex 16)
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml up -d --build
+services:
+  caddy:
+    ports:
+      - "80:80"
+      - "443:443"

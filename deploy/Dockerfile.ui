@@ -1,0 +1,11 @@
+# Build the React console, then serve it (and reverse-proxy /api) via Caddy.
+FROM node:20-slim AS build
+WORKDIR /ui
+COPY ui/package.json ui/package-lock.json ./
+RUN npm ci
+COPY ui/ ./
+RUN npm run build
+
+FROM caddy:2-alpine
+COPY --from=build /ui/dist /srv
+COPY deploy/Caddyfile /etc/caddy/Caddyfile
