@@ -18,6 +18,7 @@ from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from inference_demo.autoscaler import AutoscalerConfig
@@ -214,6 +215,12 @@ def create_app(
                     await asyncio.sleep(tick_s)
 
         return StreamingResponse(gen(), media_type="text/event-stream")
+
+    # Optionally serve the built console from the same container (co-host deploy).
+    # Mounted last so /api/* and /metrics (registered above) take precedence.
+    ui_dist = os.environ.get("UI_DIST")
+    if ui_dist and os.path.isdir(ui_dist):
+        app.mount("/", StaticFiles(directory=ui_dist, html=True), name="ui")
 
     return app
 

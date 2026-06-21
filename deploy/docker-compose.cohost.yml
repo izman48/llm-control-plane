@@ -1,0 +1,29 @@
+# Co-host overlay: one container (UI + API) joined to an EXISTING reverse proxy's
+# Docker network, with no published host ports. The external proxy adds a vhost
+# pointing at `llm-dashboard:8000`. Used to run the demo alongside another app on
+# the same box without contending for 80/443.
+#
+#   NET=finance-tracker_default CONTROL_TOKEN=$(openssl rand -hex 16) \
+#     docker compose -f deploy/docker-compose.cohost.yml up -d --build
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.cohost
+    container_name: llm-dashboard
+    environment:
+      PUBLIC_DEMO: "1"
+      PUBLIC_MAX_WORKERS: "8"
+      PUBLIC_MAX_RATE: "150"
+      PUBLIC_MAX_TOKENS: "512"
+      CONTROL_TOKEN: ${CONTROL_TOKEN:?set CONTROL_TOKEN}
+    restart: unless-stopped
+    cpus: 0.75
+    mem_limit: 450m
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    name: ${NET:?set NET to the existing proxy network}
+    external: true
