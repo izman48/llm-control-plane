@@ -1,20 +1,19 @@
 """RealModelWorker — a real small model with OUR continuous batching.
 
 This is the backend that actually showcases the project's batching claim: we own
-the decode loop (no ``model.generate``), keep a KV cache across steps, batch
-multiple sequences through one forward pass, and admit/evict sequences every step
-(continuous, non-paged).
+the decode loop (no ``model.generate``), keep a persistent batched KV cache, and
+interleave prefill and decode steps (vLLM-style) so running sequences only ever
+decode incrementally — admitting a new sequence prefills *it alone* and merges
+its KV cache into the running batch (no re-prefill of existing sequences). We
+admit/evict every step (continuous, non-paged). Greedy decode for determinism.
+
+A ``continuous=False`` mode reproduces static batching (admit a whole batch, drain
+it before admitting the next) for the static-vs-continuous benchmark.
 
 Host-native only (MPS isn't available in Docker on macOS). Heavy deps (torch,
 transformers) are imported lazily so the rest of the package — and CI — never
-needs them. Default model: Qwen2.5-0.5B-Instruct.
-
-Batching strategy (honest framing): we keep one batched KV cache for the running
-set. When the set changes (a sequence finishes or a new one is admitted) we
-**rebuild** the cache with a batched prefill over the current sequences; between
-membership changes we decode incrementally against the cache. The rebuild-on-
-membership-change recompute is the inefficiency that PagedAttention removes — we
-do NOT implement paged attention. Decoding is greedy (argmax) for determinism.
+needs them. Default model: Qwen2.5-0.5B-Instruct. We do NOT implement paged
+attention (the KV cache is contiguous + left-padded, not paged).
 """
 
 from __future__ import annotations
@@ -44,6 +43,7 @@ class RealModelWorker:
         *,
         model_name: str = DEFAULT_MODEL,
         max_batch_size: int = 8,
+        continuous: bool = True,
         device: str | None = None,
         dtype: Any = None,
     ) -> None:
@@ -52,6 +52,7 @@ class RealModelWorker:
 
         self.worker_id = worker_id
         self.max_batch_size = max_batch_size
+        self.continuous = continuous
         self._torch = torch
         if device is None:
             device = "mps" if torch.backends.mps.is_available() else "cpu"
@@ -69,9 +70,8 @@ class RealModelWorker:
         self._waiting: deque[_Seq] = deque()
         self._running: list[_Seq] = []
         self._generated: dict[SeqId, list[int]] = {}
-        self._cache: Any = None
-        self._attn: Any = None
-        self._dirty = True
+        self._cache: Any = None  # persistent batched DynamicCache, rows align to _running
+        self._attn: Any = None  # [B, S] attention mask, left-padded
 
     # ---- Worker protocol ----------------------------------------------------
 
@@ -84,29 +84,15 @@ class RealModelWorker:
         return seq_id
 
     def step(self) -> list[TokenEvent]:
-        torch = self._torch
-        before = len(self._running)
-        self._running = [s for s in self._running if not s.finished]  # evict finished
-        while len(self._running) < self.max_batch_size and self._waiting:  # admit into free slots
-            self._running.append(self._waiting.popleft())
-        if len(self._running) != before or self._cache is None:
-            self._dirty = True
-        if not self._running:
-            return []
-
-        with torch.no_grad():
-            logits = self._forward()  # [B, vocab] next-token logits per running seq
-        next_ids = torch.argmax(logits, dim=-1).tolist()
-
-        events: list[TokenEvent] = []
-        for s, tid in zip(self._running, next_ids, strict=True):
-            s.token_ids.append(int(tid))
-            s.generated += 1
-            self._generated.setdefault(s.seq_id, []).append(int(tid))
-            is_final = tid == self._eos or s.generated >= s.max_new
-            s.finished = is_final
-            events.append(TokenEvent(seq_id=s.seq_id, is_final=is_final, ts=0.0))
-        return events
+        self._evict_finished()
+        free = self.max_batch_size - len(self._running)
+        admit_ok = (self.continuous or not self._running) and bool(self._waiting) and free > 0
+        with self._torch.no_grad():
+            if admit_ok:
+                return self._prefill_step(free)
+            if self._running:
+                return self._decode_step()
+        return []
 
     def in_flight(self) -> int:
         return len(self._running)
@@ -119,6 +105,14 @@ class RealModelWorker:
     def generated_ids(self, seq_id: SeqId) -> list[int]:
         """Token ids generated for a sequence (for verification / detokenizing)."""
         return self._generated.get(seq_id, [])
+
+    def reset(self) -> None:
+        """Clear all sequence state (keeps the loaded model) — used by the benchmark."""
+        self._waiting.clear()
+        self._running = []
+        self._generated = {}
+        self._cache = None
+        self._attn = None
 
     def state(self) -> WorkerState:
         pending = sum(max(0, s.max_new - s.generated) for s in self._running)
@@ -136,29 +130,42 @@ class RealModelWorker:
 
     # ---- the decode loop (ours) --------------------------------------------
 
-    def _forward(self) -> Any:
-        torch = self._torch
-        if self._dirty:
-            input_ids, attn = self._left_pad([s.token_ids for s in self._running])
-            pos = self._position_ids(attn)
-            out = self._model(
-                input_ids=input_ids, attention_mask=attn, position_ids=pos, use_cache=True
-            )
-            self._cache = out.past_key_values
-            self._attn = attn
-            self._dirty = False
-            return out.logits[:, -1, :]
+    def _evict_finished(self) -> None:
+        if not self._running:
+            return
+        keep = [i for i, s in enumerate(self._running) if not s.finished]
+        if len(keep) == len(self._running):
+            return
+        if not keep:
+            self._running, self._cache, self._attn = [], None, None
+            return
+        idx = self._torch.tensor(keep, device=self._device)
+        self._cache.batch_select_indices(idx)
+        self._attn = self._attn[idx]
+        self._running = [self._running[i] for i in keep]
 
-        # incremental: one new token per running seq against the running cache
+    def _prefill_step(self, free: int) -> list[TokenEvent]:
+        chunk = [self._waiting.popleft() for _ in range(min(free, len(self._waiting)))]
+        ids, attn = self._left_pad([s.token_ids for s in chunk])
+        out = self._model(
+            input_ids=ids,
+            attention_mask=attn,
+            position_ids=self._position_ids(attn),
+            use_cache=True,
+        )
+        if self._cache is None:
+            self._cache, self._attn = out.past_key_values, attn
+        else:
+            self._merge(out.past_key_values, attn)
+        self._running.extend(chunk)
+        return self._sample_and_emit(out.logits[:, -1, :], chunk)
+
+    def _decode_step(self) -> list[TokenEvent]:
+        torch = self._torch
         last = torch.tensor([[s.token_ids[-1]] for s in self._running], device=self._device)
         pos = self._attn.sum(dim=-1, keepdim=True)  # next position per row (0-indexed)
-        self._attn = torch.cat(
-            [
-                self._attn,
-                torch.ones((len(self._running), 1), dtype=self._attn.dtype, device=self._device),
-            ],
-            dim=1,
-        )
+        ones = torch.ones((len(self._running), 1), dtype=self._attn.dtype, device=self._device)
+        self._attn = torch.cat([self._attn, ones], dim=1)
         out = self._model(
             input_ids=last,
             attention_mask=self._attn,
@@ -167,7 +174,45 @@ class RealModelWorker:
             use_cache=True,
         )
         self._cache = out.past_key_values
-        return out.logits[:, -1, :]
+        return self._sample_and_emit(out.logits[:, -1, :], self._running)
+
+    def _sample_and_emit(self, logits: Any, seqs: list[_Seq]) -> list[TokenEvent]:
+        next_ids = self._torch.argmax(logits, dim=-1).tolist()
+        events: list[TokenEvent] = []
+        for s, tid in zip(seqs, next_ids, strict=True):
+            s.token_ids.append(int(tid))
+            s.generated += 1
+            self._generated.setdefault(s.seq_id, []).append(int(tid))
+            is_final = tid == self._eos or s.generated >= s.max_new
+            s.finished = is_final
+            events.append(TokenEvent(seq_id=s.seq_id, is_final=is_final, ts=0.0))
+        return events
+
+    def _merge(self, chunk_cache: Any, chunk_attn: Any) -> None:
+        """Splice a freshly-prefilled chunk's KV cache into the running batch.
+
+        Left-pad both to a common length, then concatenate along the batch dim —
+        no re-prefill of the already-running sequences.
+        """
+        torch = self._torch
+        s_run, s_new = self._attn.shape[1], chunk_attn.shape[1]
+        s = max(s_run, s_new)
+        run_pad, new_pad = s - s_run, s - s_new
+        self._attn = torch.cat(
+            [self._pad_mask(self._attn, run_pad), self._pad_mask(chunk_attn, new_pad)], dim=0
+        )
+        for run_layer, new_layer in zip(self._cache.layers, chunk_cache.layers, strict=True):
+            run_layer.keys = torch.cat(
+                [self._pad_time(run_layer.keys, run_pad), self._pad_time(new_layer.keys, new_pad)],
+                dim=0,
+            )
+            run_layer.values = torch.cat(
+                [
+                    self._pad_time(run_layer.values, run_pad),
+                    self._pad_time(new_layer.values, new_pad),
+                ],
+                dim=0,
+            )
 
     def _left_pad(self, batch: list[list[int]]) -> tuple[Any, Any]:
         torch = self._torch
@@ -175,13 +220,21 @@ class RealModelWorker:
         pad = self._tok.pad_token_id
         ids = [[pad] * (maxlen - len(b)) + b for b in batch]
         mask = [[0] * (maxlen - len(b)) + [1] * len(b) for b in batch]
-        return (
-            torch.tensor(ids, device=self._device),
-            torch.tensor(mask, device=self._device),
-        )
+        return torch.tensor(ids, device=self._device), torch.tensor(mask, device=self._device)
 
     def _position_ids(self, attn: Any) -> Any:
         # left-padding-aware: real tokens get 0,1,2,...; pad positions clamped to 0
         pos = attn.long().cumsum(dim=-1) - 1
         pos.masked_fill_(attn == 0, 0)
         return pos
+
+    def _pad_mask(self, mask: Any, pad: int) -> Any:
+        if pad == 0:
+            return mask
+        torch = self._torch
+        zeros = torch.zeros((mask.shape[0], pad), dtype=mask.dtype, device=self._device)
+        return torch.cat([zeros, mask], dim=1)
+
+    def _pad_time(self, t: Any, pad: int) -> Any:
+        # t is [B, H, S, D]; left-pad the time dim (S, i.e. dim=-2) by `pad`.
+        return t if pad == 0 else self._torch.nn.functional.pad(t, (0, 0, pad, 0))

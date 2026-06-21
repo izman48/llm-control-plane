@@ -85,3 +85,40 @@ def test_batched_decode_isolates_sequences() -> None:
 
     for rid, _ in prompts:
         assert batched.generated_ids(SeqId(rid)) == alone[rid], f"seq {rid} differs when batched"
+
+
+def test_midflight_admission_merges_cache_correctly() -> None:
+    # Admit B after A has already decoded several tokens: exercises the KV-cache
+    # merge (splice a freshly-prefilled sequence into a running batch).
+    n = 10
+    a_alone = RealModelWorker(WorkerId("solo"), max_batch_size=1)
+    a_alone.admit(_req("a", "Count to three", out=n))
+    _run(a_alone)
+    b_alone = RealModelWorker(WorkerId("solo"), max_batch_size=1)
+    b_alone.admit(_req("b", "Name a fruit", out=n))
+    _run(b_alone)
+
+    w = RealModelWorker(WorkerId("mix"), max_batch_size=4)
+    w.admit(_req("a", "Count to three", out=n))
+    for _ in range(4):  # let A prefill + decode a few tokens first
+        w.step()
+    w.admit(_req("b", "Name a fruit", out=n))  # merged into the running batch
+    _run(w)
+
+    assert w.generated_ids(SeqId("a")) == a_alone.generated_ids(SeqId("a"))
+    assert w.generated_ids(SeqId("b")) == b_alone.generated_ids(SeqId("b"))
+
+
+def test_static_mode_matches_continuous_outputs() -> None:
+    # Static batching changes timing, not greedy outputs — they must be identical.
+    prompts = [("a", "Count to three"), ("b", "Name a fruit"), ("c", "Say hi")]
+    n = 8
+
+    def run_mode(continuous: bool) -> dict[str, list[int]]:
+        w = RealModelWorker(WorkerId("w"), max_batch_size=2, continuous=continuous)
+        for rid, text in prompts:
+            w.admit(_req(rid, text, out=n))
+        _run(w)
+        return {rid: w.generated_ids(SeqId(rid)) for rid, _ in prompts}
+
+    assert run_mode(continuous=True) == run_mode(continuous=False)

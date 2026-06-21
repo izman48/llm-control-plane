@@ -231,6 +231,8 @@ Python is managed with `uv`; the venv is pinned to 3.12 via `.python-version`.
 - `make typecheck` — `uv run mypy` (strict on `src/`).
 - `make bench` — run the static-vs-continuous benchmark; writes the money graph +
   summary to `src/inference_demo/bench/out/` (`static_vs_continuous.svg` / `.md`).
+- `make bench-real` — real-model static-vs-continuous benchmark (host-native, needs
+  the `realmodel` extra); writes `real_static_vs_continuous.{svg,md}` to the same dir.
 - `make dev` — serve the control-plane API on `127.0.0.1:8000`
   (`uvicorn inference_demo.gateway.app:app`). Background loop steps the pool + pumps
   the load generator. Key endpoints: `POST /api/submit`, `POST /api/loadgen`,

@@ -80,8 +80,18 @@ policy and writes a throughput-vs-tail-latency graph + summary to
 | makespan | 96.1 s | **30.4 s** |
 
 A `test_bench` guard fails CI if this claim ever flips. These are **deterministic-sim**
-numbers — the sim's job is to prove the *structural* win (slot reuse vs whole-batch-wait); Phase 6
-re-runs the same story on a real model to confirm the sim is honest.
+numbers — the sim's job is to prove the *structural* win (slot reuse vs whole-batch-wait).
+
+**Confirmed on a real model** (`make bench-real`, Qwen2.5-0.5B on MPS, 32 skewed requests,
+our own continuous batched decode loop):
+
+| metric | static | continuous |
+| --- | --- | --- |
+| throughput | 53 tok/s | **86 tok/s (1.62×)** |
+| p99 latency | 19.8 s | **13.1 s (1.51× lower)** |
+
+Same structural win on hardware — smaller margin than the sim because real prefill/decode costs
+differ, which is exactly the point of re-running it for real.
 
 ## Routing strategies (the contrast is the demo)
 
@@ -140,8 +150,8 @@ Key endpoints: `POST /api/submit`, `/api/loadgen`, `/api/strategy`, `/api/autosc
 
 - **Phase 6** ✅ — `OpenAIWorker` (mock-tested in CI) + `RealModelWorker` with our own continuous
   batched decode on a real model, verified on-device (greedy matches HF `generate()`; batched
-  decode matches per-sequence decode). Remaining: re-run the static-vs-continuous benchmark on the
-  real model to confirm the sim's story.
+  decode matches per-sequence decode; mid-flight KV-cache merge correct). The real
+  static-vs-continuous benchmark confirms the sim's story (1.62× throughput, 1.51× lower p99).
 - **Phase 7** — Docker Compose + VPS deploy (sim-only public demo, gated controls, hard caps).
 - **Phase 8** — architecture diagram, recorded demo, hosted URL, full prior-work writeup.
 

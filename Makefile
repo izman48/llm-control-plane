@@ -1,4 +1,4 @@
-.PHONY: setup test lint typecheck dev bench up ui-install ui-dev ui-build ui-test
+.PHONY: setup test lint typecheck dev bench bench-real up ui-install ui-dev ui-build ui-test
 
 setup:
 	uv sync --extra dev
@@ -15,6 +15,10 @@ typecheck:
 
 bench:
 	uv run python -m inference_demo.bench.static_vs_continuous
+
+# Real-model benchmark (host-native; needs the realmodel extra).
+bench-real:
+	uv run python -m inference_demo.bench.real_static_vs_continuous
 
 dev:
 	uv run uvicorn inference_demo.gateway.app:app --host 127.0.0.1 --port 8000
