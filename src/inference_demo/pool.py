@@ -5,12 +5,15 @@ everything one global sim step at a time. The pool's own clock is authoritative
 for metrics (worker-local clocks would diverge when the autoscaler adds workers
 mid-run), so token timings are stamped with the pool clock, not TokenEvent.ts.
 
-All policy lives in the pure modules; this class is the wiring and the I/O-free
-event loop body. The gateway drives it (background loop in prod, explicit steps
-in tests).
+Workers are created via an injected factory, so the pool is backend-agnostic: the
+same control plane runs over SimWorker, OpenAIWorker, or RealModelWorker. All
+policy lives in the pure modules; this class is the wiring and the I/O-free event
+loop body. The gateway drives it (background loop in prod, explicit steps in tests).
 """
 
 from __future__ import annotations
+
+from collections.abc import Callable
 
 from inference_demo.autoscaler import Autoscaler, AutoscalerConfig, PoolSnapshot, ScaleAction
 from inference_demo.metrics import Metrics
@@ -18,23 +21,26 @@ from inference_demo.routing.router import Router
 from inference_demo.routing.strategies import make_strategy
 from inference_demo.sim.worker import SimProfile, SimWorker
 from inference_demo.types import Request, WorkerId, WorkerState
+from inference_demo.workers.base import ControlWorker
+
+WorkerFactory = Callable[[WorkerId], ControlWorker]
 
 
 class PoolManager:
     def __init__(
         self,
         *,
+        worker_factory: WorkerFactory,
         n_workers: int,
-        profile: SimProfile,
-        max_batch_size: int,
+        step_s: float,
         router: Router,
         autoscaler: Autoscaler,
         metrics: Metrics,
         autoscale_enabled: bool = True,
         autoscale_every_steps: int = 10,
     ) -> None:
-        self.profile = profile
-        self.max_batch_size = max_batch_size
+        self._worker_factory = worker_factory
+        self.step_s = step_s
         self.router = router
         self.autoscaler = autoscaler
         self.metrics = metrics
@@ -45,7 +51,7 @@ class PoolManager:
         self._steps = 0
         self._next_id = 0
         self._last_scale_clock = 0.0
-        self._workers: dict[WorkerId, SimWorker] = {}
+        self._workers: dict[WorkerId, ControlWorker] = {}
         for _ in range(n_workers):
             self._add_worker()
 
@@ -54,9 +60,7 @@ class PoolManager:
     def _add_worker(self) -> WorkerId:
         wid = WorkerId(f"w{self._next_id}")
         self._next_id += 1
-        self._workers[wid] = SimWorker(
-            wid, max_batch_size=self.max_batch_size, profile=self.profile
-        )
+        self._workers[wid] = self._worker_factory(wid)
         return wid
 
     def _remove_idle_worker(self) -> WorkerId | None:
@@ -110,7 +114,7 @@ class PoolManager:
         return wid
 
     def step(self) -> None:
-        self._clock += self.profile.step_s
+        self._clock += self.step_s
         self._steps += 1
         for w in self._workers.values():
             for ev in w.step():
@@ -169,8 +173,36 @@ class PoolManager:
         }
 
 
+def _sim_factory(max_batch_size: int, profile: SimProfile) -> WorkerFactory:
+    def make(wid: WorkerId) -> ControlWorker:
+        return SimWorker(wid, max_batch_size=max_batch_size, profile=profile)
+
+    return make
+
+
+def _openai_factory(base_url: str, model: str) -> WorkerFactory:
+    from inference_demo.workers.openai_worker import OpenAIWorker
+
+    def make(wid: WorkerId) -> ControlWorker:
+        return OpenAIWorker(wid, base_url=base_url, model=model)
+
+    return make
+
+
+def _realmodel_factory(model: str, max_batch_size: int) -> WorkerFactory:
+    from inference_demo.workers.real_model_worker import DEFAULT_MODEL, RealModelWorker
+
+    name = model if model != "qwen2.5:0.5b" else DEFAULT_MODEL  # default OpenAI tag -> HF id
+
+    def make(wid: WorkerId) -> ControlWorker:
+        return RealModelWorker(wid, model_name=name, max_batch_size=max_batch_size)
+
+    return make
+
+
 def build_pool(
     *,
+    backend: str = "sim",
     n_workers: int = 2,
     max_batch_size: int = 8,
     strategy: str = "least-pending-tokens",
@@ -178,9 +210,23 @@ def build_pool(
     min_workers: int = 1,
     max_workers: int = 8,
     seed: int | None = None,
+    base_url: str = "http://localhost:11434",
+    model: str = "qwen2.5:0.5b",
 ) -> PoolManager:
     """Construct a ready-to-run pool with sensible defaults (used by the gateway)."""
-    profile = SimProfile(step_s=0.01, prefill_tokens_per_step=128)
+    if backend == "sim":
+        profile = SimProfile(step_s=0.01, prefill_tokens_per_step=128)
+        factory: WorkerFactory = _sim_factory(max_batch_size, profile)
+        step_s = profile.step_s
+    elif backend == "openai":
+        factory = _openai_factory(base_url, model)
+        step_s = 0.05  # pool tick granularity for metrics (external server decodes)
+    elif backend == "realmodel":
+        factory = _realmodel_factory(model, max_batch_size)
+        step_s = 0.05  # one decode iteration per pool step
+    else:
+        raise ValueError(f"unknown backend: {backend!r}")
+
     router = Router(make_strategy(strategy, seed=seed))
     autoscaler = Autoscaler(
         AutoscalerConfig(
@@ -192,9 +238,9 @@ def build_pool(
         )
     )
     return PoolManager(
+        worker_factory=factory,
         n_workers=n_workers,
-        profile=profile,
-        max_batch_size=max_batch_size,
+        step_s=step_s,
         router=router,
         autoscaler=autoscaler,
         metrics=Metrics(),

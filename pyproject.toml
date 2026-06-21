@@ -19,6 +19,13 @@ dev = [
     "ruff>=0.5",
     "mypy>=1.10",
 ]
+# Phase 6 real-model worker (host-native, NOT installed in CI). Heavy: torch.
+# Imported lazily; its on-device tests are gated behind the "realmodel" marker.
+realmodel = [
+    "torch>=2.2",
+    "transformers>=4.44",
+    "accelerate>=0.33",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -30,7 +37,10 @@ packages = ["src/inference_demo"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-addopts = "-q"
+addopts = "-q -m 'not realmodel'"
+markers = [
+    "realmodel: on-device tests needing the 'realmodel' extra (torch); deselected in CI",
+]
 
 [tool.ruff]
 src = ["src", "tests"]
@@ -44,3 +54,8 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 python_version = "3.12"
 strict = true
 files = ["src"]
+
+# Heavy optional deps (realmodel extra) — not installed in CI; lazily imported.
+[[tool.mypy.overrides]]
+module = ["torch.*", "transformers.*"]
+ignore_missing_imports = true

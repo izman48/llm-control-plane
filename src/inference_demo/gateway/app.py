@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Literal
@@ -187,5 +188,16 @@ async def _run_loop(
         await asyncio.sleep(tick_s)
 
 
+def _pool_from_env() -> PoolManager:
+    """Build the pool from env for `make dev`. WORKER_BACKEND=sim|openai (default
+    sim); OPENAI_BASE_URL + MODEL_NAME configure the OpenAI-compatible endpoint."""
+    backend = os.environ.get("WORKER_BACKEND", "sim")
+    return build_pool(
+        backend=backend,
+        base_url=os.environ.get("OPENAI_BASE_URL", "http://localhost:11434"),
+        model=os.environ.get("MODEL_NAME", "qwen2.5:0.5b"),
+    )
+
+
 # Module-level app for `uvicorn inference_demo.gateway.app:app` (background on).
-app = create_app(build_pool(), run_background=True)
+app = create_app(_pool_from_env(), run_background=True)

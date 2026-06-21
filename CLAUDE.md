@@ -238,6 +238,18 @@ Python is managed with `uv`; the venv is pinned to 3.12 via `.python-version`.
   `GET /api/snapshot`, `GET /api/stream` (SSE), `GET /metrics` (Prometheus).
 - `make up` — placeholder until phase 7 (docker compose).
 
+Backends (phase 6). `make dev` reads `WORKER_BACKEND` (default `sim`):
+
+- `sim` — SimWorker, no model, runs anywhere (default; what CI tests).
+- `openai` — `OpenAIWorker` against an OpenAI-compatible endpoint; set
+  `OPENAI_BASE_URL` + `MODEL_NAME` (e.g. Ollama: `ollama run qwen2.5:0.5b`).
+  Local/self-hosted only (SSRF — see Endpoint feature notes). Tested in CI via a
+  mocked HTTP endpoint.
+- `realmodel` — `RealModelWorker` (HF transformers + MPS, OUR continuous batching).
+  Host-native only. First install the heavy deps: `uv sync --extra dev --extra
+  realmodel`. On-device tests are gated: `uv run pytest -m realmodel` (downloads
+  Qwen2.5-0.5B-Instruct ~1 GB on first run). Excluded from the default `make test`.
+
 React control console (`ui/`, Vite + TS; needs Node/npm):
 
 - `make ui-install` — `npm --prefix ui install`.
