@@ -1,10 +1,11 @@
-// Backend selector. Sim is active; Endpoint (OpenAI-compatible) and MLX are
-// present but disabled here — they land in phase 6 (and Endpoint is local-mode-only
-// for SSRF/reachability reasons; see CLAUDE.md).
+// Backend selector. The hosted demo runs the Sim backend; the real-model and
+// OpenAI-compatible endpoint backends are self-hosted only (an endpoint can't be
+// taken server-side on a public box — SSRF — and a hosted box can't reach a
+// reviewer's localhost model anyway).
 const BACKENDS = [
   { id: "sim", label: "Sim", enabled: true },
-  { id: "endpoint", label: "Endpoint (phase 6)", enabled: false },
-  { id: "mlx", label: "MLX (phase 6)", enabled: false },
+  { id: "endpoint", label: "Endpoint (self-hosted)", enabled: false },
+  { id: "realmodel", label: "Real model (self-hosted)", enabled: false },
 ];
 
 export function BackendSelector() {
