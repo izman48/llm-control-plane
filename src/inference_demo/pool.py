@@ -167,7 +167,7 @@ class PoolManager:
 
     def snapshot(self) -> dict[str, object]:
         return {
-            "metrics": self.metrics.snapshot().to_dict(),
+            "metrics": self.metrics.snapshot(now=self._clock).to_dict(),
             "pool": self.pool_snapshot(),
             "recent": self.metrics.recent_requests(15),
         }

@@ -73,9 +73,10 @@ class MetricsSnapshot:
 
 
 class Metrics:
-    def __init__(self, window: int = 200) -> None:
+    def __init__(self, window: int = 200, throughput_window_s: float = 5.0) -> None:
         self._open: dict[str, _Open] = {}
         self._recent: deque[CompletedRequest] = deque(maxlen=window)
+        self._throughput_window_s = throughput_window_s
         self._completed_total = 0
         self._tokens_total = 0
         self._in_flight = 0
@@ -137,28 +138,36 @@ class Metrics:
 
     # ---- reads --------------------------------------------------------------
 
-    def snapshot(self) -> MetricsSnapshot:
+    def snapshot(self, now: float | None = None) -> MetricsSnapshot:
         ttfts = [r.ttft_s for r in self._recent]
         e2es = [r.e2e_s for r in self._recent]
         return MetricsSnapshot(
             completed_total=self._completed_total,
             in_flight=self._in_flight,
             tokens_total=self._tokens_total,
-            throughput_tok_s=self._throughput(),
+            throughput_tok_s=self._throughput(now),
             ttft_p50_s=percentile(ttfts, 50),
             ttft_p99_s=percentile(ttfts, 99),
             e2e_p50_s=percentile(e2es, 50),
             e2e_p99_s=percentile(e2es, 99),
         )
 
-    def _throughput(self) -> float:
-        """Output tokens/sec across the recent window's completion span."""
-        if len(self._recent) < 2:
+    def _throughput(self, now: float | None = None) -> float:
+        """Output tokens/sec over a trailing time window ending at ``now``.
+
+        Anchoring the window's right edge at the caller's clock (not the last
+        stored completion) is what makes throughput decay to zero once traffic
+        stops: with no fresh completions, the window empties as ``now`` advances.
+        ``now=None`` falls back to the latest completion for clock-free callers.
+        """
+        if not self._recent:
             return 0.0
-        span = self._recent[-1].finish_ts - self._recent[0].finish_ts
-        if span <= 0:
+        edge = now if now is not None else self._recent[-1].finish_ts
+        cutoff = edge - self._throughput_window_s
+        tokens = sum(r.tokens for r in self._recent if r.finish_ts > cutoff)
+        if tokens == 0:
             return 0.0
-        return sum(r.tokens for r in self._recent) / span
+        return tokens / self._throughput_window_s
 
     def recent_requests(self, k: int) -> list[dict[str, object]]:
         rows = list(self._recent)[-k:]

@@ -48,6 +48,17 @@ def test_in_flight_gauge_and_throughput_positive() -> None:
     assert snap.throughput_tok_s > 0.0
 
 
+def test_throughput_decays_to_zero_when_traffic_stops() -> None:
+    # Regression: killing workers / stopping traffic must drain throughput.
+    # The window is anchored to the caller's clock, so as `now` advances past
+    # the last completion the trailing window empties and the rate falls to 0.
+    m = Metrics(throughput_window_s=5.0)
+    _one_request(m, "r1", arrival=0.0, first=0.1, final=0.5, n=10)
+    _one_request(m, "r2", arrival=0.1, first=0.2, final=0.6, n=10)
+    assert m.snapshot(now=0.6).throughput_tok_s > 0.0  # fresh traffic
+    assert m.snapshot(now=100.0).throughput_tok_s == 0.0  # long after it stopped
+
+
 def test_recent_requests_log_carries_routing_decision() -> None:
     m = Metrics()
     _one_request(m, "r1", arrival=0.0, first=0.2, final=1.0, n=3)
