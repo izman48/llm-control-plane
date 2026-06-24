@@ -9,6 +9,7 @@ const { sample } = vi.hoisted(() => {
       metrics: {
         completed_total: 42,
         in_flight: 12,
+        queue_depth: 7,
         tokens_total: 1337,
         throughput_tok_s: 712.4,
         offered_load_req_s: 18.2,

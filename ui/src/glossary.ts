@@ -3,13 +3,19 @@
 export const GLOSSARY = {
   // --- metric cards ---
   throughput:
-    "Output tokens per second across all workers, averaged over the last 5 seconds " +
-    "(tokens completed in the last 5s ÷ 5). Because it's a 5-second moving average it " +
-    "ramps down to 0 a few seconds after traffic stops — it reflects recent work, not " +
-    "only what's running this instant.",
+    "Output tokens per second across all workers (a smoothed moving average). Why it matters: " +
+    "it's the system's useful work rate — how much serving capacity you're getting from the pool. " +
+    "But read it alongside TTFT and queue depth: raw throughput can look fine while latency is " +
+    "quietly blowing up under load.",
   inFlight:
     "Requests being decoded across all workers right now. Drops to 0 immediately when " +
-    "work stops — unlike throughput, which is a rolling average and lags by a few seconds.",
+    "work stops — unlike throughput, which is a rolling average and lags by a few seconds. " +
+    "Why it matters: it's the live concurrency the batcher is actually exploiting.",
+  queueDepth:
+    "Requests waiting across all workers, not yet started decoding. Why it matters: this is the " +
+    "backlog — it's the clearest live tell between batching strategies and routing choices. Under " +
+    "the same load, smart routing and continuous batching keep it low and flat; round-robin or " +
+    "static batching let it pile up (and TTFT climbs with it).",
   completed: "Total requests finished since the server started.",
   ttft:
     "Time To First Token — how long a request waits (queue + prefill) before it streams " +
@@ -18,8 +24,10 @@ export const GLOSSARY = {
     "Median TTFT: half of requests start streaming faster than this, half slower. The " +
     "typical experience.",
   ttftP99:
-    "99th-percentile TTFT: only 1 request in 100 is slower than this. The tail latency — " +
-    "what your unluckiest users see, and what naive routing blows up under skew.",
+    "99th-percentile TTFT: only 1 request in 100 waits longer than this before its first token. " +
+    "Why it matters: this is THE metric for interactive serving — the tail is what users actually " +
+    "feel, and it's where bad routing and static batching fall apart (head-of-line blocking) " +
+    "while throughput still looks healthy. The headline number for the continuous-vs-static story.",
   e2e: "End-to-end latency: from arrival to the final token — the whole request.",
   e2eP99:
     "99th-percentile end-to-end latency: 1 request in 100 takes longer than this to fully " +
@@ -38,6 +46,14 @@ export const GLOSSARY = {
     "Offered load over time (req/s, smoothed): the demand the load generator is creating. " +
     "Watch it against throughput — when load outruns capacity, queues and TTFT climb until " +
     "the autoscaler adds workers.",
+  ttftChart:
+    "99th-percentile TTFT over time — the tail latency users feel. Why it's here: this is where " +
+    "good decisions show up. Switch to a load-aware strategy or continuous batching under the same " +
+    "load and watch this line drop, even when throughput barely moves.",
+  queueChart:
+    "Total queued requests over time (the backlog). Why it's here: the most direct picture of the " +
+    "system keeping up or falling behind. A flat, low line means capacity matches demand; a rising " +
+    "line means work is piling up — and TTFT rises right behind it.",
 
   // --- backends ---
   backendSim:

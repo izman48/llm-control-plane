@@ -299,3 +299,20 @@ tr.unhealthy td {
   line-height: 1.4;
   margin-bottom: 8px;
 }
+
+/* Live charts in a compact 2-up grid (important ones first / on top). */
+.charts-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+
+.charts-grid .chart-panel {
+  margin: 0;
+}
+
+@media (max-width: 720px) {
+  .charts-grid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -181,7 +181,9 @@ class PoolManager:
         for w in self._workers.values():
             for ev in w.step():
                 self.metrics.on_token(str(ev.seq_id), ts=self._clock, is_final=ev.is_final)
-        self.metrics.set_in_flight(sum(w.in_flight() for w in self._workers.values()))
+        states = [w.state() for w in self._workers.values()]
+        self.metrics.set_in_flight(sum(s.in_flight for s in states))
+        self.metrics.set_queued(sum(s.queue_depth for s in states))
         self.metrics.tick(dt)  # advance throughput / offered-load EWMAs by real elapsed time
         if self.autoscale_enabled and self._steps % self._autoscale_every == 0:
             self._maybe_scale()

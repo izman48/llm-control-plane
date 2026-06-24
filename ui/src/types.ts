@@ -3,6 +3,7 @@
 export interface MetricsSnapshot {
   completed_total: number;
   in_flight: number;
+  queue_depth: number;
   tokens_total: number;
   throughput_tok_s: number;
   offered_load_req_s: number;

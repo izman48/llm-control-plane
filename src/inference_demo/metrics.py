@@ -55,6 +55,7 @@ class CompletedRequest:
 class MetricsSnapshot:
     completed_total: int
     in_flight: int
+    queue_depth: int
     tokens_total: int
     throughput_tok_s: float
     offered_load_req_s: float
@@ -67,6 +68,7 @@ class MetricsSnapshot:
         return {
             "completed_total": self.completed_total,
             "in_flight": self.in_flight,
+            "queue_depth": self.queue_depth,
             "tokens_total": self.tokens_total,
             "throughput_tok_s": round(self.throughput_tok_s, 2),
             "offered_load_req_s": round(self.offered_load_req_s, 2),
@@ -92,6 +94,7 @@ class Metrics:
         self._completed_total = 0
         self._tokens_total = 0
         self._in_flight = 0
+        self._queued = 0
         # Rolling-rate EWMAs + the per-tick accumulators that feed them.
         self._tps_ewma = 0.0
         self._load_ewma = 0.0
@@ -159,6 +162,9 @@ class Metrics:
         self._in_flight = n
         self._g_in_flight.set(n)
 
+    def set_queued(self, n: int) -> None:
+        self._queued = n
+
     def tick(self, dt_s: float) -> None:
         """Advance the rolling-rate estimators by one step of ``dt_s`` seconds.
 
@@ -183,6 +189,7 @@ class Metrics:
         return MetricsSnapshot(
             completed_total=self._completed_total,
             in_flight=self._in_flight,
+            queue_depth=self._queued,
             tokens_total=self._tokens_total,
             throughput_tok_s=self._tps_ewma,
             offered_load_req_s=self._load_ewma,

@@ -20,6 +20,8 @@ export function App() {
   const [strategies, setStrategies] = useState<string[]>([]);
   const [history, setHistory] = useState<number[]>([]);
   const [loadHistory, setLoadHistory] = useState<number[]>([]);
+  const [ttftHistory, setTtftHistory] = useState<number[]>([]);
+  const [queueHistory, setQueueHistory] = useState<number[]>([]);
   const connected = useRef(false);
 
   useEffect(() => {
@@ -29,6 +31,8 @@ export function App() {
       setSnapshot(s);
       setHistory((h) => [...h, s.metrics.throughput_tok_s].slice(-HISTORY));
       setLoadHistory((h) => [...h, s.metrics.offered_load_req_s].slice(-HISTORY));
+      setTtftHistory((h) => [...h, s.metrics.ttft_p99_s].slice(-HISTORY));
+      setQueueHistory((h) => [...h, s.metrics.queue_depth].slice(-HISTORY));
     });
     return unsubscribe;
   }, []);
@@ -37,6 +41,8 @@ export function App() {
     api.resetPool().catch(() => undefined);
     setHistory([]);
     setLoadHistory([]);
+    setTtftHistory([]);
+    setQueueHistory([]);
   }
 
   function onStrategy(name: string) {
@@ -72,18 +78,32 @@ export function App() {
 
       <div className="grid">
         <div className="col-main">
-          <TimeSeriesChart
-            title="Throughput (tok/s)"
-            history={history}
-            color="#2ca02c"
-            tip={GLOSSARY.throughputChart}
-          />
-          <TimeSeriesChart
-            title="Offered load (req/s)"
-            history={loadHistory}
-            color="#e6a817"
-            tip={GLOSSARY.offeredLoadChart}
-          />
+          <div className="charts-grid">
+            <TimeSeriesChart
+              title="Throughput (tok/s)"
+              history={history}
+              color="#2ca02c"
+              tip={GLOSSARY.throughputChart}
+            />
+            <TimeSeriesChart
+              title="TTFT p99 (s)"
+              history={ttftHistory}
+              color="#d62728"
+              tip={GLOSSARY.ttftChart}
+            />
+            <TimeSeriesChart
+              title="Queue depth"
+              history={queueHistory}
+              color="#9467bd"
+              tip={GLOSSARY.queueChart}
+            />
+            <TimeSeriesChart
+              title="Offered load (req/s)"
+              history={loadHistory}
+              color="#e6a817"
+              tip={GLOSSARY.offeredLoadChart}
+            />
+          </div>
           <WorkerPoolView workers={pool.workers} />
           <RecentRequests rows={recent} />
         </div>
