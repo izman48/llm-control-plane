@@ -311,9 +311,14 @@ def _pool_from_env(cfg: GatewayConfig) -> PoolManager:
     """Build the pool from env for `make dev` / the container. WORKER_BACKEND=
     sim|openai|realmodel (default sim); demo mode forces sim and caps max workers."""
     backend = "sim" if cfg.demo else os.environ.get("WORKER_BACKEND", "sim")
+    # Each realmodel worker loads its own model copy into memory, so keep that pool
+    # tiny on a laptop (one worker, scale to at most two). sim/openai are cheap.
+    n_workers = 1 if backend == "realmodel" else 2
+    max_workers = min(2 if backend == "realmodel" else 8, cfg.max_workers_cap)
     return build_pool(
         backend=backend,
-        max_workers=min(8, cfg.max_workers_cap),
+        n_workers=n_workers,
+        max_workers=max_workers,
         base_url=os.environ.get("OPENAI_BASE_URL", "http://localhost:11434"),
         model=os.environ.get("MODEL_NAME", "qwen2.5:0.5b"),
     )

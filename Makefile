@@ -46,3 +46,9 @@ up:
 # needed, picks a free port, and opens the console. MODEL_NAME overrides the tag.
 up-ollama:
 	./deploy/up.sh ollama
+
+# Host-native REAL model with OUR continuous batching (Apple MPS). Installs the
+# realmodel extra, builds the console, serves both from one process, opens the
+# browser. Not Docker (no GPU in a mac container). MODEL_NAME overrides the model.
+up-realmodel:
+	./deploy/up-realmodel.sh

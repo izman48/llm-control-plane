@@ -207,56 +207,53 @@ batching only runs when *we* own the decode loop (sim or the host-native real mo
 anything backed by an external server (Ollama/vLLM) exercises the control plane but not
 our batcher.
 
-| # | Mode | Command | Dockerized? | Real model? | Our batching? |
-|---|------|---------|:-----------:|:-----------:|:-------------:|
+| # | Mode | One command | Dockerized? | Real model? | Our batching? |
+|---|------|-------------|:-----------:|:-----------:|:-------------:|
 | 1 | **Hosted demo** | open the live URL above | n/a | ❌ sim | ✅ |
 | 2 | **Docker (sim)** | `make up` | ✅ everything | ❌ sim | ✅ |
-| 3 | **Docker + real model (Ollama hybrid)** | `make up-ollama` | ✅ control plane | ✅ | ❌ (Ollama's) |
-| 4 | **Local dev, bring-your-own model** | `WORKER_BACKEND=openai OPENAI_BASE_URL=… MODEL_NAME=… make dev` | ❌ host-native | ✅ | ❌ (server's) |
-| 5 | **Full real model (our batcher)** | `uv sync --extra realmodel` → `WORKER_BACKEND=realmodel make dev` | ❌ host-native | ✅ | ✅ **ours** |
+| 3 | **Docker + real model** (Ollama hybrid) | `make up-ollama` | ✅ control plane | ✅ | ❌ (Ollama's) |
+| 4 | **Real model, our batcher** | `make up-realmodel` | ❌ host-native | ✅ | ✅ **ours** |
+| 5 | **Bring-your-own endpoint** | `WORKER_BACKEND=openai OPENAI_BASE_URL=… make dev` | ❌ host-native | ✅ | ❌ (server's) |
 
-`make up` / `make up-ollama` are turnkey: they pick a free host port (so a port already in
-use never blocks you), build + start the stack, wait until it's ready, and open the console
-in your browser. Stop with `docker compose … down` (the exact command is printed at the end).
+The `make up*` targets are **turnkey**: each picks a free host port, builds + starts everything,
+waits until it's ready, and opens the console in your browser — no copy-paste, no port clashes.
 
-**1 — Hosted demo.** Sim backend on the VPS; click and operate. Zero setup, but sim-only
-(see Honesty constraints).
+**1 — Hosted demo.** Sim backend on the VPS; click and operate. Zero setup, sim-only (see
+Honesty constraints). Backend switching is locked off here (a hosted box must stay sim-only).
 
-**2 — Docker (sim).** `make up` builds the whole stack (control plane + console), serves it on
-a free port, and opens it. Any OS, zero deps, no model. The portable way to drive the
-routing / autoscaling / observability spine.
+**2 — Docker (sim).** `make up` → the whole stack in Docker, no model, any OS, zero deps. The
+portable way to drive the routing / autoscaling / observability spine.
 
-**3 — Docker + real model (Ollama hybrid).** The control plane runs in Docker, but the model
-runs **natively on the host** via Ollama — because Docker on macOS has **no GPU passthrough**,
-so a model inside a container would be CPU-only. The dockerized control plane reaches host
-Ollama over `host.docker.internal`. This mirrors production (the model server is always a
-separate process from the control plane).
+**3 — Docker + real model (Ollama hybrid).** `make up-ollama`. The control plane runs in Docker
+but the model runs **natively on the host** via Ollama (Docker on macOS has no GPU passthrough,
+so a containerised model would be CPU-only). The container reaches host Ollama over
+`host.docker.internal` — which mirrors production, where the model server is a separate process.
+The script starts Ollama and pulls the model for you; the only prerequisite is Ollama installed
+(`brew install ollama`). Override the model with `MODEL_NAME=llama3.2:3b make up-ollama`.
+**Ollama owns the decode loop, so this is not our batching.**
 
-```bash
-make up-ollama                       # that's it — see below
-# override the model with: MODEL_NAME=llama3.2:3b make up-ollama
-```
+**4 — Real model, our batcher** (the headline). `make up-realmodel`. A real model (default
+`Qwen2.5-0.5B-Instruct`) running **our** continuous batching on Apple **MPS**, served host-native
+with the console. The target installs the `realmodel` extra (torch/transformers), builds the UI,
+and serves both from one process; the model (~1 GB) downloads on first run. `make bench-real`
+runs the static-vs-continuous benchmark in the same mode. Override with `MODEL_NAME=…`.
 
-`make up-ollama` does the whole dance for you: it starts Ollama if it isn't running, pulls the
-model on first use, then builds + opens the console. The only prerequisite is that Ollama is
-installed (`brew install ollama`, or grab it from https://ollama.com). Shows real
-routing/observability against a real model; **Ollama owns the decode loop, so this is not our
-batching.**
-
-**4 — Local dev, bring-your-own model.** Same idea as 3 but fully host-native (no Docker) and
-points at any OpenAI-compatible server you run (Ollama / vLLM / LM Studio):
+**5 — Bring-your-own endpoint.** Host-native, point the `openai` backend at any
+OpenAI-compatible server you run (Ollama / vLLM / LM Studio):
 `WORKER_BACKEND=openai OPENAI_BASE_URL=http://localhost:11434 MODEL_NAME=qwen2.5:0.5b make dev`.
 
-**5 — Full real model, our batcher.** The headline mode: a real model (default
-`Qwen2.5-0.5B-Instruct`) running **our** continuous batching on Apple MPS. Host-native only.
-`uv sync --extra realmodel`, then `WORKER_BACKEND=realmodel make dev`, or `make bench-real` for
-the static-vs-continuous benchmark. Downloads the model (~1 GB) on first run.
+> **Backend selector in the console.** You can also switch backend live from the UI (Sim ↔
+> Endpoint, with a URL + model panel). The **Real model** option is only selectable where it can
+> actually run — i.e. host-native with the `realmodel` extra installed (mode 4). In the Docker
+> stacks it's shown disabled, because torch/MPS aren't available inside the Linux container.
+> Switching is disabled entirely on the public demo (sim-only — an arbitrary endpoint URL
+> server-side is SSRF).
 
-> **Why no single "real model in one container"?** Docker Desktop on macOS runs containers in a
-> Linux VM with no access to Apple's GPU (Metal/MPS), so a containerized model is CPU-only and
-> `torch`'s MPS device isn't even available. Hence modes 3–4 keep the model on the host. On Linux
-> with an NVIDIA GPU + the container toolkit you *can* give a container the GPU and collapse this
-> into one stack.
+> **Why no single "real model in one container" on a Mac?** Docker Desktop on macOS runs
+> containers in a Linux VM with no access to Apple's GPU (Metal/MPS), so a containerised model is
+> CPU-only and `torch`'s MPS device isn't even available. Hence modes 3–4 keep the model on the
+> host. On Linux with an NVIDIA GPU + the container toolkit you *can* give a container the GPU and
+> collapse this into one stack.
 
 ## How it's engineered
 
