@@ -68,6 +68,21 @@ def test_kill_worker_endpoint_reduces_pool() -> None:
     assert after == before - 1
 
 
+def test_reset_endpoint_restores_pool_and_clears_metrics() -> None:
+    c = client()
+    c.post("/api/submit", json={"prompt_tokens": 50, "max_tokens": 5, "priority": "interactive"})
+    for _ in range(200):
+        c.post("/api/step", json={"n": 1})
+    assert c.get("/api/snapshot").json()["metrics"]["completed_total"] == 1
+
+    r = c.post("/api/reset", json={})
+    assert r.status_code == 200
+    assert r.json()["num_workers"] == 2
+    snap = c.get("/api/snapshot").json()
+    assert snap["metrics"]["completed_total"] == 0
+    assert snap["metrics"]["throughput_tok_s"] == 0.0
+
+
 def test_prometheus_endpoint_serves_text() -> None:
     c = client()
     r = c.get("/metrics")

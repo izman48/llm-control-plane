@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -199,6 +200,14 @@ def create_app(
         killed = pool.kill_worker(wid)
         return {"killed": str(killed) if killed is not None else None}
 
+    @app.post("/api/reset", dependencies=gated)
+    def reset() -> dict[str, object]:
+        # Recover a wedged or messy demo: stop load and restore the starting pool +
+        # cleared metrics, without restarting the server.
+        state.loadgen = None
+        pool.reset()
+        return {"reset": True, "num_workers": pool.num_workers}
+
     @app.get("/metrics")
     def metrics() -> Response:
         return Response(content=pool.metrics.prometheus(), media_type=PROMETHEUS_CONTENT_TYPE)
@@ -228,12 +237,24 @@ def create_app(
 async def _run_loop(
     pool: PoolManager, tick_s: float, get_loadgen: Callable[[], LoadGenerator | None]
 ) -> None:  # pragma: no cover - timing loop, exercised in live runs
+    # This loop is the heartbeat: every tick advances the pool and pumps load. It
+    # must never die, or the whole console freezes (clock stops, no autoscaling).
+    # So each tick is isolated in try/except, and we only submit when a worker
+    # exists — killing every worker mid-demo can no longer crash the loop (the
+    # autoscaler's min-workers floor brings the pool back on the next tick).
     while True:
-        lg = get_loadgen()
-        if lg is not None:
-            for req in lg.sample(tick_s):
-                pool.submit(req)
-        pool.step()
+        try:
+            lg = get_loadgen()
+            if lg is not None:
+                arrivals = lg.sample(tick_s)
+                if pool.num_workers > 0:
+                    for req in arrivals:
+                        pool.submit(req)
+            pool.step()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logging.exception("control-plane tick failed; continuing")
         await asyncio.sleep(tick_s)
 
 

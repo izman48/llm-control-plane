@@ -42,21 +42,55 @@ def test_in_flight_gauge_and_throughput_positive() -> None:
     _one_request(m, "r1", arrival=0.0, first=0.1, final=0.5, n=10)
     _one_request(m, "r2", arrival=0.1, first=0.2, final=0.6, n=10)
     m.set_in_flight(3)
+    m.tick(0.1)  # fold the 20 emitted tokens into the throughput EWMA
     snap = m.snapshot()
     assert snap.in_flight == 3
     assert snap.completed_total == 2
     assert snap.throughput_tok_s > 0.0
 
 
-def test_throughput_decays_to_zero_when_traffic_stops() -> None:
-    # Regression: killing workers / stopping traffic must drain throughput.
-    # The window is anchored to the caller's clock, so as `now` advances past
-    # the last completion the trailing window empties and the rate falls to 0.
-    m = Metrics(throughput_window_s=5.0)
+def test_throughput_ewma_rises_then_decays_to_zero_when_traffic_stops() -> None:
+    # Regression: killing workers / stopping traffic must drain throughput. The
+    # EWMA is driven by tick(); with no fresh tokens it decays toward 0 instead of
+    # sticking at its last value (the original "stuck at 4000 tok/s" bug).
+    m = Metrics(half_life_s=0.2)
+    dt = 0.05
+    for i in range(60):  # steady stream of tokens
+        m.on_submit(f"a{i}", arrival_ts=i * dt)
+        for _ in range(100):
+            m.on_token(f"a{i}", ts=i * dt, is_final=False)
+        m.tick(dt)
+    assert m.snapshot().throughput_tok_s > 0.0  # fresh traffic
+
+    for _ in range(300):  # traffic stopped, clock keeps ticking
+        m.tick(dt)
+    assert m.snapshot().throughput_tok_s < 1.0  # effectively zero
+
+
+def test_offered_load_tracks_arrivals_then_decays() -> None:
+    m = Metrics(half_life_s=0.2)
+    dt = 0.05
+    for i in range(60):  # one arrival per tick = 20 req/s
+        m.on_submit(f"a{i}", arrival_ts=i * dt)
+        m.tick(dt)
+    assert m.snapshot().offered_load_req_s > 0.0
+
+    for _ in range(300):  # arrivals stopped
+        m.tick(dt)
+    assert m.snapshot().offered_load_req_s < 1.0
+
+
+def test_reset_clears_all_state() -> None:
+    m = Metrics()
     _one_request(m, "r1", arrival=0.0, first=0.1, final=0.5, n=10)
-    _one_request(m, "r2", arrival=0.1, first=0.2, final=0.6, n=10)
-    assert m.snapshot(now=0.6).throughput_tok_s > 0.0  # fresh traffic
-    assert m.snapshot(now=100.0).throughput_tok_s == 0.0  # long after it stopped
+    m.tick(0.05)
+    assert m.snapshot().completed_total == 1
+    m.reset()
+    snap = m.snapshot()
+    assert snap.completed_total == 0
+    assert snap.tokens_total == 0
+    assert snap.throughput_tok_s == 0.0
+    assert snap.offered_load_req_s == 0.0
 
 
 def test_recent_requests_log_carries_routing_decision() -> None:

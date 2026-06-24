@@ -1,4 +1,6 @@
 import type { RecentRow } from "../types";
+import { GLOSSARY } from "../glossary";
+import { InfoTip } from "./InfoTip";
 
 interface Props {
   rows: RecentRow[];
@@ -13,9 +15,9 @@ export function RecentRequests({ rows }: Props) {
           <tr>
             <th>req</th>
             <th>worker</th>
-            <th>strategy</th>
-            <th>TTFT</th>
-            <th>E2E</th>
+            <th>strategy<InfoTip text={GLOSSARY.strategy} label="What is strategy?" /></th>
+            <th>TTFT<InfoTip text={GLOSSARY.ttft} label="What is TTFT?" /></th>
+            <th>E2E<InfoTip text={GLOSSARY.e2e} label="What is E2E?" /></th>
             <th>tok</th>
           </tr>
         </thead>

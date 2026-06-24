@@ -7,8 +7,9 @@ import { MetricCards } from "./components/MetricCards";
 import { RecentRequests } from "./components/RecentRequests";
 import { ScenarioButtons } from "./components/ScenarioButtons";
 import { StrategySwitcher } from "./components/StrategySwitcher";
-import { ThroughputChart } from "./components/ThroughputChart";
+import { TimeSeriesChart } from "./components/TimeSeriesChart";
 import { WorkerPoolView } from "./components/WorkerPoolView";
+import { GLOSSARY } from "./glossary";
 import type { AutoscalerView, Snapshot } from "./types";
 
 const HISTORY = 60;
@@ -17,6 +18,7 @@ export function App() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [strategies, setStrategies] = useState<string[]>([]);
   const [history, setHistory] = useState<number[]>([]);
+  const [loadHistory, setLoadHistory] = useState<number[]>([]);
   const connected = useRef(false);
 
   useEffect(() => {
@@ -25,9 +27,16 @@ export function App() {
       connected.current = true;
       setSnapshot(s);
       setHistory((h) => [...h, s.metrics.throughput_tok_s].slice(-HISTORY));
+      setLoadHistory((h) => [...h, s.metrics.offered_load_req_s].slice(-HISTORY));
     });
     return unsubscribe;
   }, []);
+
+  function onReset() {
+    api.resetPool().catch(() => undefined);
+    setHistory([]);
+    setLoadHistory([]);
+  }
 
   function onStrategy(name: string) {
     api.setStrategy(name).catch(() => undefined);
@@ -53,13 +62,27 @@ export function App() {
         <span className="badge">strategy: {pool.strategy}</span>
         <span className="badge">t = {pool.clock_s.toFixed(1)}s</span>
         <span className="badge">{pool.num_workers} workers</span>
+        <button className="reset-btn" onClick={onReset} title="Stop load and restore the starting pool + cleared metrics">
+          Reset
+        </button>
       </header>
 
       <MetricCards metrics={metrics} />
 
       <div className="grid">
         <div className="col-main">
-          <ThroughputChart history={history} />
+          <TimeSeriesChart
+            title="Throughput (tok/s)"
+            history={history}
+            color="#2ca02c"
+            tip={GLOSSARY.throughputChart}
+          />
+          <TimeSeriesChart
+            title="Offered load (req/s)"
+            history={loadHistory}
+            color="#e6a817"
+            tip={GLOSSARY.offeredLoadChart}
+          />
           <WorkerPoolView workers={pool.workers} />
           <RecentRequests rows={recent} />
         </div>

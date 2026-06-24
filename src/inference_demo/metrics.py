@@ -1,11 +1,14 @@
 """Observability — first-class, not an afterthought.
 
 Records each request's lifecycle (submit -> route -> first token -> final token)
-and derives staged timings (TTFT, end-to-end), throughput, and p50/p99 over a
-recent window. Also exposes a Prometheus text exposition for ``/metrics``.
+and derives staged timings (TTFT, end-to-end), throughput, offered load, and
+p50/p99 over a recent window. Also exposes a Prometheus text exposition.
 
-Timestamps are supplied by the caller (the PoolManager's sim clock), so this
-module stays pure aggregation with no notion of wall-clock time.
+Throughput and offered load are exponential moving averages driven by ``tick(dt)``
+once per pool step (not a fixed trailing window): they ramp smoothly and decay to
+~0 a few half-lives after work stops — no value that sticks when traffic ends, and
+no hard window edge. Timestamps for the staged timings are supplied by the caller
+(the PoolManager's sim clock), so this module stays pure aggregation.
 """
 
 from __future__ import annotations
@@ -54,6 +57,7 @@ class MetricsSnapshot:
     in_flight: int
     tokens_total: int
     throughput_tok_s: float
+    offered_load_req_s: float
     ttft_p50_s: float
     ttft_p99_s: float
     e2e_p50_s: float
@@ -65,6 +69,7 @@ class MetricsSnapshot:
             "in_flight": self.in_flight,
             "tokens_total": self.tokens_total,
             "throughput_tok_s": round(self.throughput_tok_s, 2),
+            "offered_load_req_s": round(self.offered_load_req_s, 2),
             "ttft_p50_s": round(self.ttft_p50_s, 3),
             "ttft_p99_s": round(self.ttft_p99_s, 3),
             "e2e_p50_s": round(self.e2e_p50_s, 3),
@@ -73,13 +78,24 @@ class MetricsSnapshot:
 
 
 class Metrics:
-    def __init__(self, window: int = 200, throughput_window_s: float = 5.0) -> None:
+    def __init__(self, window: int = 200, half_life_s: float = 0.5) -> None:
+        # half_life_s sets how fast the throughput / offered-load EWMAs respond and
+        # decay: after work stops the rate halves every half_life_s of sim time.
+        self._window = window
+        self._half_life_s = half_life_s
+        self._init_state()
+
+    def _init_state(self) -> None:
         self._open: dict[str, _Open] = {}
-        self._recent: deque[CompletedRequest] = deque(maxlen=window)
-        self._throughput_window_s = throughput_window_s
+        self._recent: deque[CompletedRequest] = deque(maxlen=self._window)
         self._completed_total = 0
         self._tokens_total = 0
         self._in_flight = 0
+        # Rolling-rate EWMAs + the per-tick accumulators that feed them.
+        self._tps_ewma = 0.0
+        self._load_ewma = 0.0
+        self._tokens_since_tick = 0
+        self._arrivals_since_tick = 0
 
         self._registry = CollectorRegistry()
         self._c_requests = Counter(
@@ -92,10 +108,15 @@ class Metrics:
             "inference_in_flight", "Sequences currently running", registry=self._registry
         )
 
+    def reset(self) -> None:
+        """Clear all state back to a fresh start (the console's Reset button)."""
+        self._init_state()
+
     # ---- lifecycle ----------------------------------------------------------
 
     def on_submit(self, req_id: str, arrival_ts: float) -> None:
         self._open[req_id] = _Open(req_id=req_id, worker_id="", strategy="", arrival_ts=arrival_ts)
+        self._arrivals_since_tick += 1
 
     def on_route(self, req_id: str, worker_id: WorkerId, strategy: str) -> None:
         rec = self._open.get(req_id)
@@ -111,6 +132,7 @@ class Metrics:
             rec.first_token_ts = ts
         rec.tokens += n_tokens
         self._tokens_total += n_tokens
+        self._tokens_since_tick += n_tokens
         self._c_tokens.inc(n_tokens)
         if is_final:
             self._complete(rec, ts)
@@ -136,38 +158,38 @@ class Metrics:
         self._in_flight = n
         self._g_in_flight.set(n)
 
+    def tick(self, dt_s: float) -> None:
+        """Advance the rolling-rate estimators by one step of ``dt_s`` seconds.
+
+        Folds the tokens and arrivals seen since the last tick into exponential
+        moving averages of throughput (tok/s) and offered load (req/s). EWMA — vs
+        a fixed trailing window — gives a smooth line that decays toward 0 a few
+        half-lives after work stops, so neither rate can stick at a stale value.
+        """
+        if dt_s <= 0:
+            return
+        alpha = 1.0 - 0.5 ** (dt_s / self._half_life_s)
+        self._tps_ewma += alpha * (self._tokens_since_tick / dt_s - self._tps_ewma)
+        self._load_ewma += alpha * (self._arrivals_since_tick / dt_s - self._load_ewma)
+        self._tokens_since_tick = 0
+        self._arrivals_since_tick = 0
+
     # ---- reads --------------------------------------------------------------
 
-    def snapshot(self, now: float | None = None) -> MetricsSnapshot:
+    def snapshot(self) -> MetricsSnapshot:
         ttfts = [r.ttft_s for r in self._recent]
         e2es = [r.e2e_s for r in self._recent]
         return MetricsSnapshot(
             completed_total=self._completed_total,
             in_flight=self._in_flight,
             tokens_total=self._tokens_total,
-            throughput_tok_s=self._throughput(now),
+            throughput_tok_s=self._tps_ewma,
+            offered_load_req_s=self._load_ewma,
             ttft_p50_s=percentile(ttfts, 50),
             ttft_p99_s=percentile(ttfts, 99),
             e2e_p50_s=percentile(e2es, 50),
             e2e_p99_s=percentile(e2es, 99),
         )
-
-    def _throughput(self, now: float | None = None) -> float:
-        """Output tokens/sec over a trailing time window ending at ``now``.
-
-        Anchoring the window's right edge at the caller's clock (not the last
-        stored completion) is what makes throughput decay to zero once traffic
-        stops: with no fresh completions, the window empties as ``now`` advances.
-        ``now=None`` falls back to the latest completion for clock-free callers.
-        """
-        if not self._recent:
-            return 0.0
-        edge = now if now is not None else self._recent[-1].finish_ts
-        cutoff = edge - self._throughput_window_s
-        tokens = sum(r.tokens for r in self._recent if r.finish_ts > cutoff)
-        if tokens == 0:
-            return 0.0
-        return tokens / self._throughput_window_s
 
     def recent_requests(self, k: int) -> list[dict[str, object]]:
         rows = list(self._recent)[-k:]

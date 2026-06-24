@@ -57,6 +57,9 @@ export const stopLoadgen = () => postJSON<unknown>("/api/loadgen/stop", {});
 export const killWorker = () =>
   postJSON<{ killed: string | null }>("/api/workers/kill", {});
 
+export const resetPool = () =>
+  postJSON<{ reset: boolean; num_workers: number }>("/api/reset", {});
+
 /** Subscribe to the live SSE snapshot stream. Returns an unsubscribe fn. */
 export function subscribe(onSnapshot: (s: Snapshot) => void): () => void {
   const es = new EventSource("/api/stream");

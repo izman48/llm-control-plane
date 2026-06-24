@@ -1,14 +1,23 @@
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { InfoTip } from "./InfoTip";
 
 interface Props {
+  title: string;
   history: number[];
+  color: string;
+  tip: string;
 }
 
-export function ThroughputChart({ history }: Props) {
-  const data = history.map((v, i) => ({ t: i, tps: v }));
+// A small live line chart over a rolling history buffer. Generic so the same
+// component renders both the throughput and offered-load series.
+export function TimeSeriesChart({ title, history, color, tip }: Props) {
+  const data = history.map((v, i) => ({ t: i, v }));
   return (
     <div className="panel chart-panel">
-      <h3>Throughput (tok/s)</h3>
+      <h3>
+        {title}
+        <InfoTip text={tip} label={`About the ${title} chart`} />
+      </h3>
       <div style={{ width: "100%", height: 160 }}>
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={data} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
@@ -17,8 +26,8 @@ export function ThroughputChart({ history }: Props) {
             <Tooltip />
             <Line
               type="monotone"
-              dataKey="tps"
-              stroke="#2ca02c"
+              dataKey="v"
+              stroke={color}
               strokeWidth={2}
               dot={false}
               isAnimationActive={false}

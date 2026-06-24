@@ -1,4 +1,6 @@
 import type { WorkerView } from "../types";
+import { GLOSSARY } from "../glossary";
+import { InfoTip } from "./InfoTip";
 
 interface Props {
   workers: WorkerView[];
@@ -15,10 +17,10 @@ export function WorkerPoolView({ workers }: Props) {
         <thead>
           <tr>
             <th>worker</th>
-            <th>queue</th>
-            <th>in-flight</th>
-            <th>load</th>
-            <th>cached</th>
+            <th>queue<InfoTip text={GLOSSARY.workerQueue} label="What is queue?" /></th>
+            <th>in-flight<InfoTip text={GLOSSARY.workerInFlight} label="What is in-flight?" /></th>
+            <th>load<InfoTip text={GLOSSARY.workerLoad} label="What is load?" /></th>
+            <th>cached<InfoTip text={GLOSSARY.workerCached} label="What is cached?" /></th>
           </tr>
         </thead>
         <tbody>

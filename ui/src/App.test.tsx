@@ -11,6 +11,7 @@ const { sample } = vi.hoisted(() => {
         in_flight: 12,
         tokens_total: 1337,
         throughput_tok_s: 712.4,
+        offered_load_req_s: 18.2,
         ttft_p50_s: 0.03,
         ttft_p99_s: 0.08,
         e2e_p50_s: 0.25,
@@ -41,6 +42,7 @@ vi.mock("./api", () => ({
   startLoadgen: vi.fn().mockResolvedValue({}),
   stopLoadgen: vi.fn().mockResolvedValue({}),
   killWorker: vi.fn().mockResolvedValue({ killed: "w0" }),
+  resetPool: vi.fn().mockResolvedValue({ reset: true, num_workers: 2 }),
 }));
 
 import { App } from "./App";

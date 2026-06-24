@@ -6,6 +6,7 @@ export const sampleSnapshot: Snapshot = {
     in_flight: 12,
     tokens_total: 1337,
     throughput_tok_s: 712.4,
+    offered_load_req_s: 18.2,
     ttft_p50_s: 0.03,
     ttft_p99_s: 0.08,
     e2e_p50_s: 0.25,

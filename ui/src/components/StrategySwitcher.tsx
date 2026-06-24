@@ -1,3 +1,6 @@
+import { GLOSSARY } from "../glossary";
+import { InfoTip } from "./InfoTip";
+
 interface Props {
   strategies: string[];
   current: string;
@@ -7,7 +10,10 @@ interface Props {
 export function StrategySwitcher({ strategies, current, onChange }: Props) {
   return (
     <div className="panel">
-      <h3>Routing strategy</h3>
+      <h3>
+        Routing strategy
+        <InfoTip text={GLOSSARY.strategy} label="What is a routing strategy?" />
+      </h3>
       <select
         aria-label="routing strategy"
         value={current}

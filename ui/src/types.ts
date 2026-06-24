@@ -5,6 +5,7 @@ export interface MetricsSnapshot {
   in_flight: number;
   tokens_total: number;
   throughput_tok_s: number;
+  offered_load_req_s: number;
   ttft_p50_s: number;
   ttft_p99_s: number;
   e2e_p50_s: number;

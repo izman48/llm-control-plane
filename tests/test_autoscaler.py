@@ -57,6 +57,21 @@ def test_does_not_scale_down_at_min() -> None:
     assert auto.decide(snap(n=2, avg=0.0)) == ScaleAction.HOLD
 
 
+# ---- hard bounds: recover out-of-range pools, even during cooldown ----------
+
+
+def test_recovers_to_min_when_below_floor_even_during_cooldown() -> None:
+    # All workers were killed (n=0 < min=1): must scale up immediately, ignoring
+    # cooldown and the (zero) load. Without this, a kill-all wedges the pool at 0.
+    auto = Autoscaler(cfg(min_workers=1, cooldown_s=15.0))
+    assert auto.decide(snap(n=0, avg=0.0, since=0.0)) == ScaleAction.UP
+
+
+def test_sheds_down_to_ceiling_even_during_cooldown() -> None:
+    auto = Autoscaler(cfg(max_workers=4, cooldown_s=15.0))
+    assert auto.decide(snap(n=6, avg=0.0, since=0.0)) == ScaleAction.DOWN
+
+
 # ---- hysteresis: hold inside the band --------------------------------------
 
 

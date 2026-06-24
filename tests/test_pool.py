@@ -59,6 +59,33 @@ def test_autoscaler_removes_idle_workers_down_to_min() -> None:
     assert pool.num_workers == 1
 
 
+def test_pool_recovers_to_min_workers_after_killing_all() -> None:
+    # Regression: killing every worker must not wedge the pool at 0 — the
+    # autoscaler's min floor brings it back (and the live loop can't crash).
+    pool = build_pool(n_workers=2, autoscale=True, min_workers=1, max_workers=4)
+    while pool.kill_worker() is not None:
+        pass
+    assert pool.num_workers == 0
+    for _ in range(50):
+        pool.step()
+    assert pool.num_workers >= 1
+
+
+def test_reset_restores_initial_pool_and_clears_metrics() -> None:
+    pool = build_pool(n_workers=2, autoscale=False)
+    for i in range(8):
+        pool.submit(_req(f"r{i}", out=5))
+    for _ in range(300):
+        pool.step()
+    assert pool.metrics.snapshot().completed_total > 0
+    pool.reset()
+    assert pool.num_workers == 2
+    assert pool.clock == 0.0
+    snap = pool.metrics.snapshot()
+    assert snap.completed_total == 0
+    assert snap.throughput_tok_s == 0.0
+
+
 def test_kill_worker_removes_it() -> None:
     pool = build_pool(n_workers=3, autoscale=False)
     before = pool.num_workers

@@ -47,6 +47,7 @@ class PoolManager:
         self.autoscale_enabled = autoscale_enabled
         self._autoscale_every = autoscale_every_steps
 
+        self._initial_workers = n_workers
         self._clock = 0.0
         self._steps = 0
         self._next_id = 0
@@ -120,8 +121,22 @@ class PoolManager:
             for ev in w.step():
                 self.metrics.on_token(str(ev.seq_id), ts=self._clock, is_final=ev.is_final)
         self.metrics.set_in_flight(sum(w.in_flight() for w in self._workers.values()))
+        self.metrics.tick(self.step_s)  # advance throughput / offered-load EWMAs
         if self.autoscale_enabled and self._steps % self._autoscale_every == 0:
             self._maybe_scale()
+
+    def reset(self) -> None:
+        """Restore the pool to its initial state: rebuild the starting worker set,
+        zero the clock, and clear all metrics. Backs the console's Reset button so a
+        wedged or messy demo can be recovered without restarting the server."""
+        self._clock = 0.0
+        self._steps = 0
+        self._next_id = 0
+        self._last_scale_clock = 0.0
+        self._workers.clear()
+        for _ in range(self._initial_workers):
+            self._add_worker()
+        self.metrics.reset()
 
     def _maybe_scale(self) -> None:
         states = self.worker_states()
@@ -167,7 +182,7 @@ class PoolManager:
 
     def snapshot(self) -> dict[str, object]:
         return {
-            "metrics": self.metrics.snapshot(now=self._clock).to_dict(),
+            "metrics": self.metrics.snapshot().to_dict(),
             "pool": self.pool_snapshot(),
             "recent": self.metrics.recent_requests(15),
         }
@@ -215,7 +230,10 @@ def build_pool(
 ) -> PoolManager:
     """Construct a ready-to-run pool with sensible defaults (used by the gateway)."""
     if backend == "sim":
-        profile = SimProfile(step_s=0.01, prefill_tokens_per_step=128)
+        # step_s matches the gateway's live tick (~0.05s) so one decode step ~ one
+        # tick of real time: sim-time tracks wall-clock, and metrics (throughput
+        # decay, autoscaler cooldowns) read in real seconds rather than 5x slow.
+        profile = SimProfile(step_s=0.05, prefill_tokens_per_step=128)
         factory: WorkerFactory = _sim_factory(max_batch_size, profile)
         step_s = profile.step_s
     elif backend == "openai":

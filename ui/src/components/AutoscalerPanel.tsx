@@ -1,4 +1,6 @@
 import type { AutoscalerView } from "../types";
+import { GLOSSARY } from "../glossary";
+import { InfoTip } from "./InfoTip";
 
 interface Props {
   autoscaler: AutoscalerView;
@@ -9,7 +11,10 @@ interface Props {
 export function AutoscalerPanel({ autoscaler, currentWorkers, onChange }: Props) {
   return (
     <div className="panel">
-      <h3>Autoscaler</h3>
+      <h3>
+        Autoscaler
+        <InfoTip text={GLOSSARY.autoscaler} label="What is the autoscaler?" />
+      </h3>
       <label className="row">
         <input
           type="checkbox"
@@ -38,6 +43,7 @@ export function AutoscalerPanel({ autoscaler, currentWorkers, onChange }: Props)
       </label>
       <label className="row">
         target queue
+        <InfoTip text={GLOSSARY.targetQueue} label="What is target queue depth?" />
         <input
           type="number"
           min={1}

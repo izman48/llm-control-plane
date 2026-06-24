@@ -58,6 +58,13 @@ class Autoscaler:
 
     def decide(self, snapshot: PoolSnapshot) -> ScaleAction:
         c = self.config
+        # Hard bounds first, ignoring cooldown: if the pool is out of [min, max]
+        # (e.g. a scenario killed every worker), recover toward the range at once.
+        if snapshot.num_workers < c.min_workers:
+            return ScaleAction.UP
+        if snapshot.num_workers > c.max_workers:
+            return ScaleAction.DOWN
+
         if snapshot.seconds_since_last_scale < c.cooldown_s:
             return ScaleAction.HOLD  # cooling down after a recent action
 

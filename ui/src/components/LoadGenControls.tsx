@@ -1,5 +1,7 @@
 import { useState } from "react";
 import type { Preset } from "../types";
+import { GLOSSARY } from "../glossary";
+import { InfoTip } from "./InfoTip";
 
 interface Props {
   onStart: (preset: Preset, rate: number) => void;
@@ -16,6 +18,7 @@ export function LoadGenControls({ onStart, onStop }: Props) {
       <h3>Load generator</h3>
       <label className="row">
         preset
+        <InfoTip text={GLOSSARY.loadPreset} label="What do the presets mean?" />
         <select
           aria-label="load preset"
           value={preset}
@@ -30,6 +33,7 @@ export function LoadGenControls({ onStart, onStop }: Props) {
       </label>
       <label className="row">
         rate (req/s)
+        <InfoTip text={GLOSSARY.loadRate} label="What is rate?" />
         <input
           type="number"
           min={1}
