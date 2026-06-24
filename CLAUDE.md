@@ -242,20 +242,21 @@ Python is managed with `uv`; the venv is pinned to 3.12 via `.python-version`.
   the load generator. Key endpoints: `POST /api/submit`, `POST /api/loadgen`,
   `POST /api/strategy`, `POST /api/autoscaler`, `POST /api/workers/kill`,
   `GET /api/snapshot`, `GET /api/stream` (SSE), `GET /metrics` (Prometheus).
-- `make up` — `docker compose up --build`: full sim stack (control-plane API,
-  internal-only, + Caddy serving the console) at `http://localhost:8080`. The
-  backend runs in demo mode (sim-only, capped). Prod deploy adds
-  `deploy/docker-compose.prod.yml` (binds 80/443, auto-HTTPS) with `SITE_ADDRESS`
-  + `CONTROL_TOKEN` set. Env caps: `PUBLIC_DEMO`, `PUBLIC_MAX_WORKERS`,
-  `PUBLIC_MAX_RATE`, `PUBLIC_MAX_TOKENS`, `CONTROL_TOKEN`. Caddy never proxies
-  `/metrics` (internals stay private).
-- `make up-ollama` — `docker compose -f docker-compose.yml -f docker-compose.ollama.yml
-  up --build`: the same dockerized control plane, but the override sets `PUBLIC_DEMO=0`
-  + `WORKER_BACKEND=openai` + `OPENAI_BASE_URL=http://host.docker.internal:11434` so it
-  routes to a REAL model served by host-native Ollama (`ollama serve` + `ollama pull
-  qwen2.5:0.5b` first; `MODEL_NAME` overrides the tag). Docker on macOS has no GPU
-  passthrough, so the model must stay on the host — this exercises routing/observability
+- `make up` — turnkey local sim stack via `deploy/up.sh sim`: picks a free host port
+  (skips ones already in use), builds + starts detached, waits until ready, opens the
+  console, and prints the logs/stop commands. Backend runs in demo mode (sim-only,
+  capped). Prod deploy uses `deploy/docker-compose.prod.yml` (binds 80/443, auto-HTTPS)
+  with `SITE_ADDRESS` + `CONTROL_TOKEN`. Env caps: `PUBLIC_DEMO`, `PUBLIC_MAX_WORKERS`,
+  `PUBLIC_MAX_RATE`, `PUBLIC_MAX_TOKENS`, `CONTROL_TOKEN`. Caddy never proxies `/metrics`.
+- `make up-ollama` — turnkey hybrid via `deploy/up.sh ollama`: same dockerized control
+  plane, but `docker-compose.ollama.yml` sets `PUBLIC_DEMO=0` + `WORKER_BACKEND=openai`
+  + `OPENAI_BASE_URL=http://host.docker.internal:11434` so it routes to a REAL model on
+  host-native Ollama. The script auto-starts `ollama serve`, pulls the model on first run
+  (`MODEL_NAME` overrides the tag, default `qwen2.5:0.5b`), then builds + opens the
+  console; only prerequisite is Ollama installed (`brew install ollama`). Docker on macOS
+  has no GPU passthrough, so the model stays on the host — exercises routing/observability
   on a real model, NOT our batching. `extra_hosts` maps `host.docker.internal` on Linux.
+  Verified end-to-end (real tokens generated through the dockerized control plane).
 
 Backends (phase 6). `make dev` reads `WORKER_BACKEND` (default `sim`):
 

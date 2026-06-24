@@ -204,33 +204,38 @@ our batcher.
 | # | Mode | Command | Dockerized? | Real model? | Our batching? |
 |---|------|---------|:-----------:|:-----------:|:-------------:|
 | 1 | **Hosted demo** | open the live URL above | n/a | ❌ sim | ✅ |
-| 2 | **Docker (sim)** | `make up` → `localhost:8080` | ✅ everything | ❌ sim | ✅ |
-| 3 | **Docker + real model (Ollama hybrid)** | `make up-ollama` → `localhost:8080` | ✅ control plane | ✅ | ❌ (Ollama's) |
+| 2 | **Docker (sim)** | `make up` | ✅ everything | ❌ sim | ✅ |
+| 3 | **Docker + real model (Ollama hybrid)** | `make up-ollama` | ✅ control plane | ✅ | ❌ (Ollama's) |
 | 4 | **Local dev, bring-your-own model** | `WORKER_BACKEND=openai OPENAI_BASE_URL=… MODEL_NAME=… make dev` | ❌ host-native | ✅ | ❌ (server's) |
 | 5 | **Full real model (our batcher)** | `uv sync --extra realmodel` → `WORKER_BACKEND=realmodel make dev` | ❌ host-native | ✅ | ✅ **ours** |
+
+`make up` / `make up-ollama` are turnkey: they pick a free host port (so a port already in
+use never blocks you), build + start the stack, wait until it's ready, and open the console
+in your browser. Stop with `docker compose … down` (the exact command is printed at the end).
 
 **1 — Hosted demo.** Sim backend on the VPS; click and operate. Zero setup, but sim-only
 (see Honesty constraints).
 
-**2 — Docker (sim).** `make up` builds the whole stack (control plane + console) and serves
-it at `http://localhost:8080`. Any OS, zero deps, no model. The portable way to drive the
+**2 — Docker (sim).** `make up` builds the whole stack (control plane + console), serves it on
+a free port, and opens it. Any OS, zero deps, no model. The portable way to drive the
 routing / autoscaling / observability spine.
 
 **3 — Docker + real model (Ollama hybrid).** The control plane runs in Docker, but the model
 runs **natively on the host** via Ollama — because Docker on macOS has **no GPU passthrough**,
 so a model inside a container would be CPU-only. The dockerized control plane reaches host
 Ollama over `host.docker.internal`. This mirrors production (the model server is always a
-separate process from the control plane). Setup:
+separate process from the control plane).
 
 ```bash
-ollama serve            # in one terminal (or the Ollama app)
-ollama pull qwen2.5:0.5b
-make up-ollama          # control plane in Docker → real local model; console at :8080
+make up-ollama                       # that's it — see below
 # override the model with: MODEL_NAME=llama3.2:3b make up-ollama
 ```
 
-Shows real routing/observability against a real model; **Ollama owns the decode loop, so this
-is not our batching.**
+`make up-ollama` does the whole dance for you: it starts Ollama if it isn't running, pulls the
+model on first use, then builds + opens the console. The only prerequisite is that Ollama is
+installed (`brew install ollama`, or grab it from https://ollama.com). Shows real
+routing/observability against a real model; **Ollama owns the decode loop, so this is not our
+batching.**
 
 **4 — Local dev, bring-your-own model.** Same idea as 3 but fully host-native (no Docker) and
 points at any OpenAI-compatible server you run (Ollama / vLLM / LM Studio):

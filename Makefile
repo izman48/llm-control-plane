@@ -36,12 +36,13 @@ ui-build:
 ui-test:
 	npm --prefix ui test
 
-# Full sim stack (control plane + console) via Docker; serves http://localhost:8080
+# Full sim stack (control plane + console) via Docker. Picks a free port, starts
+# detached, waits until ready, and opens the console in your browser.
 up:
-	docker compose up --build
+	./deploy/up.sh sim
 
 # Hybrid: dockerized control plane + a REAL model served by host-native Ollama
-# (Docker on macOS can't reach the GPU). Needs `ollama serve` + the model pulled.
-# Serves http://localhost:8080; set MODEL_NAME to override the default tag.
+# (Docker on macOS can't reach the GPU). Auto-starts Ollama + pulls the model if
+# needed, picks a free port, and opens the console. MODEL_NAME overrides the tag.
 up-ollama:
-	docker compose -f docker-compose.yml -f docker-compose.ollama.yml up --build
+	./deploy/up.sh ollama
